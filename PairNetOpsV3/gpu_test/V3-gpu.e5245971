@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/mnt/iusers01/rb01/m60623zk/bin/PairNetOpsV3/network.py", line 513, in <module>
+    main()
+  File "/mnt/iusers01/rb01/m60623zk/bin/PairNetOpsV3/network.py", line 490, in main
+    optimizer = optim.Adam(model, lr=init_lr,betas=(0.9, 0.999),eps=1e-7,amsgrad=False)
+  File "/mnt/iusers01/rb01/m60623zk/mambaforge/envs/pairnet-gpu/lib/python3.9/site-packages/torch/optim/adam.py", line 73, in __init__
+    super().__init__(params, defaults)
+  File "/mnt/iusers01/rb01/m60623zk/mambaforge/envs/pairnet-gpu/lib/python3.9/site-packages/torch/optim/optimizer.py", line 360, in __init__
+    param_groups = list(params)
+TypeError: 'PairNet' object is not iterable
