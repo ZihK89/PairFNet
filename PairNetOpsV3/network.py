@@ -105,6 +105,7 @@ class NuclearChargePairs(nn.Module):
     
     def forward(self, atom_nc):
         #atom_nc is the nuclear charge for each atom
+        batch_size = atom_nc.size(0)
         a = atom_nc.unsqueeze(2)
         b = atom_nc.unsqueeze(1)
         c = a*b
@@ -112,7 +113,8 @@ class NuclearChargePairs(nn.Module):
         tri2 = torch.diag_embed(torch.diagonal(c, dim1=1, dim2=2)) 
         tri = tri1 - tri2
         
-        atom_nc_nonzero_values = tri[tri != 0].view(atom_nc.size(0), self.n_pairs)
+        atom_nc_nonzero_values = tri[tri != 0]
+        atom_nc_nonzero_values = atom_nc_nonzero_values.view(batch_size, self.n_pairs)
         return atom_nc_nonzero_values #[batch size, n_pairs]
 
 class CoordsToNRF(nn.Module):
@@ -129,11 +131,11 @@ class CoordsToNRF(nn.Module):
         diff = a - b
         
         diff2 = torch.sum(diff**2, dim=-1)
-        tri = torch.tril(diff2, diagonal=-1)
+        tri = torch.tril(diff2)
         nonzero_values = tri[tri != 0].view(coords.size(0), -1)
         
         r = torch.sqrt(nonzero_values) 
-        recip_r2 = 1 / r**2
+        recip_r2 = 1 / (r**2)
         nrf = ((atom_nc * self.au2kcalmola) * recip_r2) / self.max_nrf  # (batch_size, n_pairs)
         nrf = nrf.view(coords.size(0), self.n_pairs)
         
@@ -297,7 +299,7 @@ class PairNet(nn.Module):
     
 def init_weights(m):
     if isinstance(m, nn.Linear):
-        torch.nn.init.xavier_normal_(m.weight)
+        torch.nn.init.xavier_uniform_(m.weight)
         torch.nn.init.zeros_(m.bias)
 
 def train(model,train_loader, train_size,optimizer,device,loss_weights,loss_fn,n_atoms):
@@ -384,15 +386,21 @@ def val(model, val_loader,val_size, device, loss_weights, loss_fn,n_atoms):
     loss_q = running_loss_q/len(val_loader)
 
     return [loss_mean, loss_f, loss_e, loss_q]
-    
+
+
+
+
 def test(model,test_loader,device,test_size,loss_fn):
     '''
     Use this function to test the model
     '''
-    f_pred_list = []
-    e_pred_list = []
-    q_pred_list = []
-    
+    force_MainE = 0
+    force_MaxE = 0
+    energy_MainE = 0
+    energy_MaxE = 0
+    charge_MainE = 0
+    charge_MaxE = 0
+
     model.to(device)
     model.eval()
     for data in test_loader:
@@ -404,10 +412,27 @@ def test(model,test_loader,device,test_size,loss_fn):
         # forward
         outputs = model(atom_nc, coords)
         force_pred, energy_pred, charge_pred = outputs
-        f_pred_list.append(force_pred)
-        e_pred_list.append(energy_pred)
-        q_pred_list.append(charge_pred)
-    return f_pred_list, e_pred_list, q_pred_list
+        force_error = force_pred - target_force
+        energy_error = energy_pred - target_energy
+        charge_error = charge_pred - target_charge
+        
+        if force_error >= force_MaxE:
+            force_MaxE = force_error
+        if energy_error >= energy_MaxE:
+            energy_MaxE = energy_error
+        if charge_error >= charge_MaxE:
+            charge_MaxE = charge_error
+        
+        force_MainE += force_error
+        energy_MainE += energy_error
+        charge_MainE += charge_error
+    
+    force_MainE = force_MainE/len(test_loader)
+    energy_MainE = energy_MainE/len(test_loader)
+    charge_MainE = charge_MainE/len(test_loader)
+    
+    return force_MainE, energy_MainE, charge_MainE, force_MaxE, energy_MaxE, charge_MaxE
+    
 
 
 def summary(test_set,y_hat,test_size, output_dir,lable):
@@ -432,6 +457,8 @@ def main():
     build the model -> train and test
     """
     # read PairNet model parameters
+
+    
     ann_params = read_input.ann("ann_params.txt")
     n_data = ann_params["n_data"]
     n_train, n_val, n_test = n_data[0], n_data[1], n_data[2]
@@ -507,9 +534,22 @@ def main():
         #! just for testing
         print(f'Epoch: {epoch+1}, time: {epoch_time:.2f}, train loss:{train_loss[0]} val loss: {val_loss[0]}')
     
+    model_dir = './trained_model'
+    isExist = os.path.exists(model_dir)
+    if not isExist:
+        os.makedirs(model_dir)
+    torch.save(model, f'{model_dir}/model.pth')
     # test
-    # print('Testing model...')
-    # f_pred_list, e_pred_list, q_pred_list = test(model,test_loader,device,n_test,loss_fn)
+    print('Testing model...')
+    force_MainE, energy_MainE, charge_MainE, force_MaxE, energy_MaxE, charge_MaxE = test(model,test_loader,device,n_test,loss_fn)
+    print('----------------------------------')
+    print(f'Mean force errors: {force_MainE}')
+    print(f'Mean energy errors: {energy_MainE}')
+    print(f'Mean charge errors: {charge_MainE}')
+    print('----------------------------------')
+    print(f'Max force errors: {force_MaxE}')
+    print(f'Max energy errors: {energy_MaxE}')
+    print(f'Max charge errors: {charge_MaxE}')
     
     
 
